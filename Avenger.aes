@@ -1,0 +1,39 @@
+    contract Avenger =
+
+        record state = {
+            index: int,
+            map_avengers: map(string, avenger),
+            power_assigned: bool }
+        
+        record avenger = {
+            name: string,
+            power: int }
+    
+        stateful entrypoint init() = 
+            { index = 0,
+              map_avengers = {},
+              power_assigned = false }
+
+        stateful public entrypoint create_superhero(name: string) =
+            require(name_check(name), "This Superhero is not allowed")
+            let power : int = create_random_power(name)
+            create_superhero_with_values(name, power)
+
+        public entrypoint name_check(avenger_name: string): bool =
+            if(avenger_name == "Ironman" || avenger_name == "Thor" || avenger_name == "Hulk" || avenger_name == "Captain America")
+                true
+            else
+                false
+    
+        public entrypoint create_random_power(name: string): int = 
+            Chain.timestamp + state.index
+    
+
+        public stateful entrypoint create_superhero_with_values(name: string, power:int): int =
+            let new_avenger : avenger = {
+                name = name,
+                power = power}
+
+            put(state{map_avengers[name] = new_avenger})
+            put(state{index = (state.index + 1)})
+            state.index
