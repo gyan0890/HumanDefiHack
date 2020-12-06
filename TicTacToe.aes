@@ -1,0 +1,98 @@
+include "List.aes"
+contract TicTacToe =
+
+    //The state will store the ID of the ongoing game, the details of the game 
+    //and the details of the players in the system
+    record state = {
+        numGame: int,
+        gameId: int,
+        playerId: address,
+        gameDetails: map(int, game),
+        playerDetails: map(address, player) }
+
+    record game = {
+        gameId: int,
+        player1Id: address,
+        player2Id: address,
+        move: map(int, board), //Will store the values of the playerMove once they make a move on a particular square
+        gameCompleted: bool,
+        gameWinner: address}
+
+    //To store the square numbers of a board (1-9)
+    record board = {
+        square: list(int) }
+    
+    record player = {
+        playerId: address,
+        playerName: string,
+        playerMove: int, //Player move can be 0(signifying O) or 10 (signifying X)
+        numGamesWon: int }
+    
+    stateful entrypoint init() = {
+        numGame = 1,
+        gameId = 0,
+        playerId = Contract.creator,
+        gameDetails = {},
+        playerDetails = {} }
+    
+    public stateful entrypoint register_player(name : string, wallet_player: address) : player =
+        let new_player: player = {
+            playerName = name,
+            playerId = wallet_player,
+            numGamesWon = 0,
+            playerMove = 1} //playerMove will be assigned once the player is assigned to a Game
+
+        put(state{playerDetails[state.playerId] = new_player})
+        
+        new_player
+    
+    public entrypoint createBoard(): board =
+        let new_board: board = {
+                square = [1,2,3,4,5,6,7,8,9]}
+        new_board
+
+    public entrypoint getRandomMove(player_name: string) : int = 
+        if(String.length(player_name) mod 2 == 0)
+            0
+        else
+            10
+    
+    // //Initialise a game - This means a game is open for players to join
+    public stateful entrypoint initialisegame(): game =
+        let board_game: board = createBoard()
+        let new_game : game = {
+            gameId = state.numGame,
+            player1Id = Contract.creator,
+            player2Id = Contract.creator,
+            move = {[1] = board_game},
+            gameWinner = Contract.creator,
+            gameCompleted = false }
+        
+        put(state{gameDetails[state.numGame] = new_game})
+        put(state{numGame = state.numGame+1})
+        new_game
+    
+    public stateful entrypoint assignPlayertoGame(gameId: int, player1: address, player2: address): game =
+        let game_players: game = state.gameDetails[gameId]
+        let player1_game: player = state.playerDetails[player1]
+        let player2_game: player = state.playerDetails[player2]
+
+        if(getRandomMove(player1_game.playerName) == 0)
+            player2_game{playerMove = 10}
+            player1_game{playerMove = 0}
+        else
+            player2_game{playerMove = 0}
+            player1_game{playerMove = 10}
+            
+        //Updating the global playerDetails
+        put(state{playerDetails[player1] = player1_game})
+        put(state{playerDetails[player2] = player2_game})
+
+        game_players{player1Id = player1_game.playerId}
+        game_players{player2Id = player2_game.playerId}
+
+        //Updating the global game details
+        put(state{gameDetails[gameId] = game_players})
+        
+        state.gameDetails[gameId]
+        
