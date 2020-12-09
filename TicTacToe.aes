@@ -38,9 +38,6 @@ contract TicTacToe =
         
         state.playerDetails[new_player.playerId]
 
-
-    // public entrypoint getRandomMove(player_name: string) : bool = 
-    //     (String.length(player_name)) > 5
     
     // //Initialise a game - This means a game is open for players to join
     public stateful entrypoint initialisegame(): game =
@@ -58,69 +55,62 @@ contract TicTacToe =
     
     public stateful entrypoint assignPlayertoGame(gameId: int, player1: address, player2: address): game =
         // game_players 
-        //Updating the global playerDetails
+        
         require(Map.member(player1, state.playerDetails), "Player not registered")
         require(Map.member(player2, state.playerDetails), "Player not registered")
 
+        //Updating the global playerDetails
         put(state{gameDetails[gameId].player1Id = player1})
         put(state{gameDetails[gameId].player2Id = player2})
-        // //Updating the global game details
-        // put(state{gameDetails[gameId] = game_players})
         
         state.gameDetails[gameId]
     
     public stateful entrypoint makeMove(gameId:int, playerId:address, square: int): game =
+        //Check if the player exists in the database
         require(Map.member(playerId, state.playerDetails), "Player not registered")
+        //Check to ensure that the chosen square number is between 1-9
         require(square < 10 && square > 0, "Square value should be between 1-9")
+        //Checks if the square selected is already occupied
         require(!Map.member(square, state.gameDetails[gameId].game_moves), "Square occupied")
+        //Checks if the given game is completed or not
+        require(!state.gameDetails[gameId].gameCompleted, "Cannot make amove in a completed game")
         //TODO: Add condition to check if player is one of the players in the given game
+        require(((playerId == state.gameDetails[gameId].player1Id) || (playerId == state.gameDetails[gameId].player2Id)), "Player is not registered in this game")
+
         if(playerId == state.gameDetails[gameId].player1Id)
-            put(state{gameDetails[gameId].game_moves[square] = 1})
+            put(state{gameDetails[gameId].game_moves[square] = 1})  
         else
             put(state{gameDetails[gameId].game_moves[square] = 2})
         
         state.gameDetails[gameId]
 
-    public stateful entrypoint boardCheck(gameId: int) = 
+    public stateful entrypoint gameCheck(gameId: int, square1: int, square2:int, square3:int): bool =
         let moves = state.gameDetails[gameId].game_moves
-        if(Map.member(1, moves) == Map.member(2, moves) && Map.member(2, moves) == Map.member(3, moves))
-            if(moves[1] == moves[2] && moves[2] == moves[3])
-                if(moves[1] == 1)
+        if(Map.member(square1, moves) && Map.member(square2, moves) && Map.member(square3, moves))
+            if(moves[square1] == moves[square2] && moves[square2] == moves[square3])
+                if(moves[square1] == 1)
                     put(state{gameDetails[gameId].gameWinner = state.gameDetails[gameId].player1Id})
+                    put(state{gameDetails[gameId].gameCompleted = true})
+                    true
                 else
                     put(state{gameDetails[gameId].gameWinner = state.gameDetails[gameId].player2Id})
+                    put(state{gameDetails[gameId].gameCompleted = true})
+                    true
+            else
+                false
+        else
+            false
+                
 
-            put(state{gameDetails[gameId].gameCompleted = true})
+    public stateful entrypoint boardCheck(gameId: int): string = 
+        if(gameCheck(gameId, 1,2,3) || gameCheck(gameId, 1, 4, 7) || gameCheck(gameId, 1, 5, 9) || gameCheck(gameId, 4, 5, 6) || gameCheck(gameId, 8, 9, 7) || gameCheck(gameId, 2, 5, 8) || gameCheck(gameId, 3, 6, 9) || gameCheck(gameId, 3, 5, 7))
+            state.playerDetails[state.gameDetails[gameId].gameWinner].playerName
+        else
+            "In Progress"
 
-        state.gameDetails[gameId]
-        
+    
     public stateful entrypoint returnGameDetails(gameId: int): bool =
         Map.member(gameId, state.gameDetails)
 
     public stateful entrypoint returnPlayerDetails(playerId: address): bool =
         Map.member(playerId, state.playerDetails)
-
-
-
-      
-        
-                
-            
-        
-    
-
-        
-
-
-        
-            
-        
-
-
-
-
-    
-
-
-
-    
