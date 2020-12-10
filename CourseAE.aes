@@ -1,0 +1,537 @@
+include "List.aes"
+include "Option.aes" // allow use Type
+
+// pending set contract payable
+payable contract CursosAE_v4 =
+
+    // there are two profiles. 1.-Admin 2.-Student
+    record user_profile = {
+        id: int, // set id of profile that will be use to set privileges
+        name: string // set the name of profile
+        }
+    
+    // global user
+    record user_platform = {
+        name: string,
+        wallet : address, //studen account
+        chain_name : string, // .chain 
+        profile: user_profile,
+        email: string, // use to send certificate or notify an event
+        tutorials: map(int, tutorial) // Tutorial to take.
+        }
+
+    // map of balances accounts. In order to know how many token is gift to any student
+    type balances = map(address, int) // account | decimal token
+
+    // Tutorial definition
+    record tutorial = {
+        tt_id: int, // id tutorial
+        tt_name : string, // name of course 
+        tt_comment:string, // describe tt
+        tt_m_chapters : map(int, chapter), // level_id, level id list of levels. Use to know wich level-chapter is not completed.
+        tt_gift_price : int, // decimal gift tokens when a student complete a level
+        tt_completed_date: string // date that a user complete tutorial course. if empty not completed yet
+        }
+
+    // Chapter that has each tutorial
+    record chapter = { // structure of chapter
+        ch_id:int,
+        ch_name : string,
+        ch_description : string, 
+        ch_completed : bool
+        }
+
+    // Declaration and structure of datatype event
+    datatype event = // notifications:
+            AddUser (string)
+        |   AddTutorial_Student(string)
+        |   Login (address)
+        |   GetBalance(int)
+        |   Transfer(address, address, int)
+
+    record state = {
+        m_profiles: map(int, user_profile),
+        m_platform_users: map(address, user_platform), // map address - user
+        m_student_balance : map(address, int), //address, balance
+        m_tutorials : map(int, tutorial), // map tutorials
+        balances : balances // record tokens send to each student
+        }
+
+    stateful entrypoint init() =  {
+        m_profiles = { [1] = {id=1,name="Admin"}, [2] = {id=2,name="Student"} },
+        m_platform_users = {}, // map with users
+        m_student_balance = {}, // map address - balance
+        m_tutorials = {}, // map tutorials
+        balances = {} //gifts
+        }
+
+    // Get all balances state
+    entrypoint balances() : balances =
+        state.balances
+    
+    //user is already created in platform
+    function isAuthorized() =
+        require(Map.member(Call.caller,state.m_platform_users),"not allowed")
+    
+    // user rol admin : not use in this version
+    function isAdmin() =
+        if(Call.caller!=Contract.creator)
+            require(Map.member(Call.caller,state.m_platform_users),"not exists")
+            require(state.m_platform_users[Call.caller].profile.name=="Admin","not allowed - is Student")
+    
+    // user rol student : not use in this version
+    function isStudent() =
+        if(Call.caller!=Contract.creator)
+            require(Map.member(Call.caller,state.m_platform_users),"not exists")
+            require(state.m_platform_users[Call.caller].profile.name=="Student","not allowed - is Admin")
+    
+    // add a user to the platform
+    stateful entrypoint add_user_platform (name_to_add:string, wallet_to_add:address, 
+        chain_name_to_add:string, profile_id:int, email_to_add:string) = 
+        isAdmin() // only admin can create a user
+        require(Map.member(profile_id,state.m_profiles),"doesn't exist")
+        let profile=state.m_profiles[profile_id]
+        // create a record type user_platform
+        if ( profile_id == 2 ) // INIT student balance at map balances
+                put(state{ balances[wallet_to_add] = 0 })
+        let user_platform_to_add = {name=name_to_add, wallet=wallet_to_add,
+            chain_name=chain_name_to_add,profile=profile, email=email_to_add,
+            tutorials={}} // empty tutorials
+        put(state{m_platform_users[wallet_to_add]=user_platform_to_add})
+        Chain.event(AddUser(email_to_add)) //notify
+        true
+
+    // return info like address and tokens
+    entrypoint get_user_info(wallet_student: address) =
+        state.m_platform_users[wallet_student]
+ 
+    entrypoint get_tutorials() =
+        state.m_tutorials
+
+    // set tutorial
+    stateful entrypoint set_tutorial(tt_id_to_add:int, tt_name_to_add:string, 
+        tt_comment_to_add:string, tt_gift_price_to_add:int) =
+        // isAdmin() // only admin can create a tutorial  -- NOT USE YET
+        // must not exists to continue
+        require(!Map.member(tt_id_to_add,state.m_tutorials),"Already exists")
+        let tt_completed_date_to_add = "NoYet"
+        let tt_m_chapters_to_add = {}
+        let tutorial_to_add = {tt_id=tt_id_to_add, tt_name=tt_name_to_add, 
+            tt_comment=tt_comment_to_add, tt_m_chapters=tt_m_chapters_to_add, 
+            tt_gift_price=tt_gift_price_to_add,
+            tt_completed_date=tt_completed_date_to_add}
+        put(state{m_tutorials[tt_id_to_add]=tutorial_to_add})
+        true
+    
+    // create and assign a chapter/level into tutorial
+    stateful entrypoint set_chapter_tutorial(tt_id:int, ch_id_to_add:int, 
+        ch_name_to_add: string, ch_description_to_add:string, ch_completed_to_set:bool) =
+        // isAdmin() // only admin can create a tutorial -- NOT USE YET
+        require(Map.member(tt_id,state.m_tutorials),"tutorial doesn't exist")
+        // confirm that chapter does not exists
+        let chapter_to_add = { ch_id=ch_id_to_add, ch_name = ch_name_to_add,
+            ch_description = ch_description_to_add, 
+            ch_completed = ch_completed_to_set }
+        if (Map.size(state.m_tutorials[tt_id].tt_m_chapters) == 0 )
+            put(state{m_tutorials[tt_id].tt_m_chapters[ch_id_to_add] = chapter_to_add})
+        else
+            require(!Map.member(ch_id_to_add, state.m_tutorials[tt_id].tt_m_chapters), "chapter exists")
+            put(state{m_tutorials[tt_id].tt_m_chapters[ch_id_to_add] = chapter_to_add})
+        true
+
+    // assign tutorial to student
+    stateful entrypoint set_tutorial_to_student(wallet_student:address, tt_id_to_add:int) = 
+        require(Map.member(tt_id_to_add, state.m_tutorials), "tutorial does not exists")
+        // record the tutorial into a variable
+        let tt_to_insert = state.m_tutorials[tt_id_to_add]
+        // assign tutorial to student
+        put(state{m_platform_users[wallet_student].tutorials[tt_id_to_add] = tt_to_insert })
+        Chain.event(AddTutorial_Student("suscribed")) //Notify by email 
+        true
+
+    // chapter completed. 
+    stateful entrypoint set_tt_chapter_completed(wallet_student:address, tutorial_id: int, chapter_id: int,
+        date_completed:string) = 
+        // exists tutorial
+        require(Map.member(tutorial_id,state.m_tutorials),"tutorial doesn't exist")
+        // exists chapter
+        require(Map.member(chapter_id,state.m_platform_users[wallet_student].tutorials[tutorial_id].tt_m_chapters),"chapter doesn't exist")
+        put(state{m_platform_users[wallet_student].tutorials[tutorial_id].tt_m_chapters[chapter_id].ch_completed  = true } )
+        // seek if the chapter is the last one, tutorial is completed
+        let m_size = Map.size(state.m_platform_users[wallet_student].tutorials[tutorial_id].tt_m_chapters)
+        let lvl_id = chapter_id
+        if ( m_size == lvl_id )
+            // send gift -- we call it outside this entrypoint
+            set_gift_student(wallet_student, state.m_tutorials[tutorial_id].tt_gift_price)
+            // set date completed
+            put(state{m_platform_users[wallet_student].tutorials[tutorial_id].tt_completed_date = date_completed})
+        true        
+        
+    // give a student the gift for completing level increment wallet_balance
+    /// Transfer the balance of `value` from `Call.caller` to `to_account` account
+    stateful entrypoint set_gift_student(wallet_student: address, gift_price: int) =
+        internal_transfer(Call.caller, wallet_student, gift_price)
+
+    // Previus Front-end confirm SC has balance
+    // from account is Call.caller
+    stateful function internal_transfer(from_account: address, to_account: address, value: int) =
+        put(state{ balances[to_account] @ b = b + value })
+        Map.lookup(to_account, state.balances)
+        // implent call to Chain.spend to send tokens...
+        //send_token_to(to_account, value)
+
+        // notify when production
+        // Chain.event(Transfer(from_account, to_account, value))
+
+    payable stateful entrypoint send_token_to(student : address, gift_to_send: int) =
+        require(Call.value>gift_to_send,"Not enough guita")
+        Chain.spend(student, gift_to_send)
+        let donate = 200000
+        Chain.spend(Contract.address, donate)
+
+
+    stateful entrypoint get_tutorial_at_student(wallet_student:address) =
+        state.m_platform_users[wallet_student].tutorials
+    
+    // return wallet balance 
+    entrypoint get_wallet_balance (wallet_to_req: address) : option(int) =
+        Map.lookup(wallet_to_req, state.balances)
+
+
+    /***************************************************************************************
+    ***************************** init unit tests **************************************
+    ***************************************************************************************/
+    payable stateful entrypoint all_test() =
+        test_init_create_student()
+        test_init_set_tutorial()
+        test_init_set_chapter_tutorial()
+        test_init_set_tutorial_to_student()
+        test_init_set_tutorial_chapter_completed()
+        test_init_set_gift_student()
+        // test_init_send_token_to()
+        // test_init_get_all_balances()
+
+
+    stateful entrypoint test_init_create_student() =
+        // start execute entrypoint
+        add_user_platform("student1", ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG, 
+            "sudent1.chain", 2, "student1@email.com")
+        add_user_platform("student2", ak_2GnWWk8ZChG7EcZwEFZYw8uFi9netQ3QR2CkE5oMczfTfYMftX, 
+            "sudent2.chain", 2, "student2@email.com")
+        
+
+    stateful entrypoint test_init_get_user_info() =
+        get_user_info(ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG)
+        get_user_info(ak_2GnWWk8ZChG7EcZwEFZYw8uFi9netQ3QR2CkE5oMczfTfYMftX)
+        
+    
+    stateful entrypoint test_init_set_tutorial() =
+        set_tutorial( 1, "tutorial1", "description1", 2)
+        set_tutorial( 2, "tutorial2", "description2", 2)
+        set_tutorial( 3, "tutorial3", "description3", 2)
+    
+    /* tt_id:int, ch_id_to_add:int, ch_name_to_add: string, 
+           ch_description_to_add:string, ch_completed_to_set:bool */
+    stateful entrypoint test_init_set_chapter_tutorial() =
+        set_chapter_tutorial( 1, 1, "tt1_lvl1", "crear SC", false)
+
+        set_chapter_tutorial( 1, 2, "tt1_lvl2", "record and structure", false)
+
+        set_chapter_tutorial( 2, 1, "tt2_lvl3", "advance tt", false) 
+    
+    // once record chapter, confirm information in the tutorials
+    stateful entrypoint test_tutorial_info() =
+        // instead convert map to list , request all information
+        get_tutorials()
+
+    stateful entrypoint test_init_set_tutorial_to_student() =
+        // set tutorial1 & tutorial2 @compiler >= 4
+
+include "List.aes"
+include "Option.aes" // allow use Type
+
+// pending set contract payable
+payable contract CursosAE_v4 =
+
+    // there are two profiles. 1.-Admin 2.-Student
+    record user_profile = {
+        id: int, // set id of profile that will be use to set privileges
+        name: string // set the name of profile
+        }
+    
+    // global user
+    record user_platform = {
+        name: string,
+        wallet : address, //studen account
+        chain_name : string, // .chain 
+        profile: user_profile,
+        email: string, // use to send certificate or notify an event
+        tutorials: map(int, tutorial) // Tutorial to take.
+        }
+
+    // map of balances accounts. In order to know how many token is gift to any student
+    type balances = map(address, int) // account | decimal token
+
+    // Tutorial definition
+    record tutorial = {
+        tt_id: int, // id tutorial
+        tt_name : string, // name of course 
+        tt_comment:string, // describe tt
+        tt_m_chapters : map(int, chapter), // level_id, level id list of levels. Use to know wich level-chapter is not completed.
+        tt_gift_price : int, // decimal gift tokens when a student complete a level
+        tt_completed_date: string // date that a user complete tutorial course. if empty not completed yet
+        }
+
+    // Chapter that has each tutorial
+    record chapter = { // structure of chapter
+        ch_id:int,
+        ch_name : string,
+        ch_description : string, 
+        ch_completed : bool
+        }
+
+    // Declaration and structure of datatype event
+    datatype event = // notifications:
+            AddUser (string)
+        |   AddTutorial_Student(string)
+        |   Login (address)
+        |   GetBalance(int)
+        |   Transfer(address, address, int)
+
+    record state = {
+        m_profiles: map(int, user_profile),
+        m_platform_users: map(address, user_platform), // map address - user
+        m_student_balance : map(address, int), //address, balance
+        m_tutorials : map(int, tutorial), // map tutorials
+        balances : balances // record tokens send to each student
+        }
+
+    stateful entrypoint init() =  {
+        m_profiles = { [1] = {id=1,name="Admin"}, [2] = {id=2,name="Student"} },
+        m_platform_users = {}, // map with users
+        m_student_balance = {}, // map address - balance
+        m_tutorials = {}, // map tutorials
+        balances = {} //gifts
+        }
+
+    // Get all balances state
+    entrypoint balances() : balances =
+        state.balances
+    
+    //user is already created in platform
+    function isAuthorized() =
+        require(Map.member(Call.caller,state.m_platform_users),"not allowed")
+    
+    // user rol admin : not use in this version
+    function isAdmin() =
+        if(Call.caller!=Contract.creator)
+            require(Map.member(Call.caller,state.m_platform_users),"not exists")
+            require(state.m_platform_users[Call.caller].profile.name=="Admin","not allowed - is Student")
+    
+    // user rol student : not use in this version
+    function isStudent() =
+        if(Call.caller!=Contract.creator)
+            require(Map.member(Call.caller,state.m_platform_users),"not exists")
+            require(state.m_platform_users[Call.caller].profile.name=="Student","not allowed - is Admin")
+    
+    // add a user to the platform
+    stateful entrypoint add_user_platform (name_to_add:string, wallet_to_add:address, 
+        chain_name_to_add:string, profile_id:int, email_to_add:string) = 
+        isAdmin() // only admin can create a user
+        require(Map.member(profile_id,state.m_profiles),"doesn't exist")
+        let profile=state.m_profiles[profile_id]
+        // create a record type user_platform
+        if ( profile_id == 2 ) // INIT student balance at map balances
+                put(state{ balances[wallet_to_add] = 0 })
+        let user_platform_to_add = {name=name_to_add, wallet=wallet_to_add,
+            chain_name=chain_name_to_add,profile=profile, email=email_to_add,
+            tutorials={}} // empty tutorials
+        put(state{m_platform_users[wallet_to_add]=user_platform_to_add})
+        Chain.event(AddUser(email_to_add)) //notify
+        true
+
+    // return info like address and tokens
+    entrypoint get_user_info(wallet_student: address) =
+        state.m_platform_users[wallet_student]
+ 
+    entrypoint get_tutorials() =
+        state.m_tutorials
+
+    // set tutorial
+    stateful entrypoint set_tutorial(tt_id_to_add:int, tt_name_to_add:string, 
+        tt_comment_to_add:string, tt_gift_price_to_add:int) =
+        // isAdmin() // only admin can create a tutorial  -- NOT USE YET
+        // must not exists to continue
+        require(!Map.member(tt_id_to_add,state.m_tutorials),"Already exists")
+        let tt_completed_date_to_add = "NoYet"
+        let tt_m_chapters_to_add = {}
+        let tutorial_to_add = {tt_id=tt_id_to_add, tt_name=tt_name_to_add, 
+            tt_comment=tt_comment_to_add, tt_m_chapters=tt_m_chapters_to_add, 
+            tt_gift_price=tt_gift_price_to_add,
+            tt_completed_date=tt_completed_date_to_add}
+        put(state{m_tutorials[tt_id_to_add]=tutorial_to_add})
+        true
+    
+    // create and assign a chapter/level into tutorial
+    stateful entrypoint set_chapter_tutorial(tt_id:int, ch_id_to_add:int, 
+        ch_name_to_add: string, ch_description_to_add:string, ch_completed_to_set:bool) =
+        // isAdmin() // only admin can create a tutorial -- NOT USE YET
+        require(Map.member(tt_id,state.m_tutorials),"tutorial doesn't exist")
+        // confirm that chapter does not exists
+        let chapter_to_add = { ch_id=ch_id_to_add, ch_name = ch_name_to_add,
+            ch_description = ch_description_to_add, 
+            ch_completed = ch_completed_to_set }
+        if (Map.size(state.m_tutorials[tt_id].tt_m_chapters) == 0 )
+            put(state{m_tutorials[tt_id].tt_m_chapters[ch_id_to_add] = chapter_to_add})
+        else
+            require(!Map.member(ch_id_to_add, state.m_tutorials[tt_id].tt_m_chapters), "chapter exists")
+            put(state{m_tutorials[tt_id].tt_m_chapters[ch_id_to_add] = chapter_to_add})
+        true
+
+    // assign tutorial to student
+    stateful entrypoint set_tutorial_to_student(wallet_student:address, tt_id_to_add:int) = 
+        require(Map.member(tt_id_to_add, state.m_tutorials), "tutorial does not exists")
+        // record the tutorial into a variable
+        let tt_to_insert = state.m_tutorials[tt_id_to_add]
+        // assign tutorial to student
+        put(state{m_platform_users[wallet_student].tutorials[tt_id_to_add] = tt_to_insert })
+        Chain.event(AddTutorial_Student("suscribed")) //Notify by email 
+        true
+
+    // chapter completed. 
+    stateful entrypoint set_tt_chapter_completed(wallet_student:address, tutorial_id: int, chapter_id: int,
+        date_completed:string) = 
+        // exists tutorial
+        require(Map.member(tutorial_id,state.m_tutorials),"tutorial doesn't exist")
+        // exists chapter
+        require(Map.member(chapter_id,state.m_platform_users[wallet_student].tutorials[tutorial_id].tt_m_chapters),"chapter doesn't exist")
+        put(state{m_platform_users[wallet_student].tutorials[tutorial_id].tt_m_chapters[chapter_id].ch_completed  = true } )
+        // seek if the chapter is the last one, tutorial is completed
+        let m_size = Map.size(state.m_platform_users[wallet_student].tutorials[tutorial_id].tt_m_chapters)
+        let lvl_id = chapter_id
+        if ( m_size == lvl_id )
+            // send gift -- we call it outside this entrypoint
+            set_gift_student(wallet_student, state.m_tutorials[tutorial_id].tt_gift_price)
+            // set date completed
+            put(state{m_platform_users[wallet_student].tutorials[tutorial_id].tt_completed_date = date_completed})
+        true        
+        
+    // give a student the gift for completing level increment wallet_balance
+    /// Transfer the balance of `value` from `Call.caller` to `to_account` account
+    stateful entrypoint set_gift_student(wallet_student: address, gift_price: int) =
+        internal_transfer(Call.caller, wallet_student, gift_price)
+
+    // Previus Front-end confirm SC has balance
+    // from account is Call.caller
+    stateful function internal_transfer(from_account: address, to_account: address, value: int) =
+        put(state{ balances[to_account] @ b = b + value })
+        // Map.lookup(to_account, state.balances)
+        // notify when production
+        // Chain.event(Transfer(from_account, to_account, value))
+
+    payable stateful entrypoint send_token_to(student : address, gift_to_send: int) =
+        require(Call.value>gift_to_send,"Not enough guita")
+        Chain.spend(student, gift_to_send)
+        let donate = 200000
+        Chain.spend(Contract.address, donate)
+
+
+    stateful entrypoint get_tutorial_at_student(wallet_student:address) =
+        state.m_platform_users[wallet_student].tutorials
+    
+    // return wallet balance 
+    entrypoint get_wallet_balance (wallet_to_req: address) : option(int) =
+        Map.lookup(wallet_to_req, state.balances)
+
+
+    /***************************************************************************************
+    ***************************** init unit tests **************************************
+    ***************************************************************************************/
+    payable stateful entrypoint all_test() =
+        test_init_create_student()
+        test_init_set_tutorial()
+        test_init_set_chapter_tutorial()
+        test_init_set_tutorial_to_student()
+        test_init_set_tutorial_chapter_completed()
+        test_init_send_token_to()
+
+
+    stateful entrypoint test_init_create_student() =
+        // start execute entrypoint
+        add_user_platform("student1", ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG, 
+            "sudent1.chain", 2, "student1@email.com")
+        add_user_platform("student2", ak_2GnWWk8ZChG7EcZwEFZYw8uFi9netQ3QR2CkE5oMczfTfYMftX, 
+            "sudent2.chain", 2, "student2@email.com")
+        
+
+    stateful entrypoint test_init_get_user_info() =
+        get_user_info(ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG)
+        get_user_info(ak_2GnWWk8ZChG7EcZwEFZYw8uFi9netQ3QR2CkE5oMczfTfYMftX)
+        
+    
+    stateful entrypoint test_init_set_tutorial() =
+        set_tutorial( 1, "tutorial1", "description1", 2)
+        set_tutorial( 2, "tutorial2", "description2", 2)
+        set_tutorial( 3, "tutorial3", "description3", 2)
+    
+    /* tt_id:int, ch_id_to_add:int, ch_name_to_add: string, 
+           ch_description_to_add:string, ch_completed_to_set:bool */
+    stateful entrypoint test_init_set_chapter_tutorial() =
+        set_chapter_tutorial( 1, 1, "tt1_lvl1", "crear SC", false)
+
+        set_chapter_tutorial( 1, 2, "tt1_lvl2", "record and structure", false)
+
+        set_chapter_tutorial( 2, 1, "tt2_lvl3", "advance tt", false) 
+    
+    // once record chapter, confirm information in the tutorials
+    stateful entrypoint test_tutorial_info() =
+        // instead convert map to list , request all information
+        get_tutorials()
+
+    stateful entrypoint test_init_set_tutorial_to_student() =
+        // set tutorial1 & tutorial2 to student1
+        set_tutorial_to_student(ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG, 1 )
+        set_tutorial_to_student(ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG, 2 )
+        // set tutorial 1 to student2
+        set_tutorial_to_student(ak_2GnWWk8ZChG7EcZwEFZYw8uFi9netQ3QR2CkE5oMczfTfYMftX, 1 )
+
+    // all balance in 0
+    stateful entrypoint test_init_get_all_balances() =
+        //return a map: address - balance
+        balances()
+
+
+    // wallet_student, tutorial_id, chapter_id, date_completed)
+    stateful entrypoint test_init_set_tutorial_chapter_completed() =
+        // student1 is completed tt1 & tt2
+        set_tt_chapter_completed(ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG, 1, 1, "07/12/2020")
+        set_tt_chapter_completed(ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG, 1, 2, "08/12/2020")
+        set_tt_chapter_completed(ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG, 2, 1, "09/12/2020")
+        // student2 is completed to tt1 - level1
+        set_tt_chapter_completed(ak_2GnWWk8ZChG7EcZwEFZYw8uFi9netQ3QR2CkE5oMczfTfYMftX, 1, 1, "10/12/2020")
+
+    stateful entrypoint test_init_get_tutorial_at_student() =
+        // set tutorial1 & tutorial2 to student1
+        get_tutorial_at_student(ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG)
+        // set tutorial 1 to student2
+        // get_tutorial_at_student(ak_2GnWWk8ZChG7EcZwEFZYw8uFi9netQ3QR2CkE5oMczfTfYMftX)
+
+    stateful entrypoint test_init_set_gift_student() =
+        let wallet_student = ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG
+        let tutorial_id = 1
+        set_gift_student(wallet_student, 
+            state.m_platform_users[wallet_student].tutorials[tutorial_id].tt_gift_price)
+        
+    // get_balances of each students
+    stateful entrypoint test_init_get_wallet_balance() =
+        // should have 4 aettos, complete two tutorials
+        get_wallet_balance(ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG)
+        // should have 0 aettos because not complete a chapter
+        get_wallet_balance(ak_2GnWWk8ZChG7EcZwEFZYw8uFi9netQ3QR2CkE5oMczfTfYMftX)
+
+    // student : address, gift_to_send: int
+    payable stateful entrypoint test_init_send_token_to() =
+        let student = ak_2LfQmgKNT8NwG5F76VbJmcnGgWMxBEkTYEq1PvBBBQoscoAzhG
+        let gift_to_send = 3000000
+        send_token_to(student, gift_to_send)
+
